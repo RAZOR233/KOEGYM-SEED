@@ -1,23 +1,28 @@
+# game_lib/4-SudoKu/game_lib.py
+
+#Standard libraries
 import math
 import ast
 import random
 import copy
+import argparse
+
+#Commonly used open-source libraries
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import argparse
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
-    """
-    parser = argparse.ArgumentParser(description="Data creation utility")
+    Parses command-line arguments for launching the FastAPI server.
 
-    # 添加命令行参数
+    Returns:
+        argparse.Namespace: Object containing host and port settings.
+    """
+
+    parser = argparse.ArgumentParser(description="Data creation utility")
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 app = FastAPI()
@@ -29,9 +34,6 @@ difficulty_levels = {
             "difficult": (int(size * size), int(size * size/10))
         }
 
-        # self.current_board = None
-        # self.solution = None
-
 game_prompt='''
 You are a good game player, I'll give you a game board and rules.\nYour task is:\n- First, give your answer according to the game board and rules.\n- Second, output the answer in the required format. The last line of your response should be in the following format: 'Answer: $YOUR_ANSWER' (without quotes), where YOUR_ANSWER is your final answer to the question,e.g.'Answer: happy'
 
@@ -40,7 +42,13 @@ You are a good game player, I'll give you a game board and rules.\nYour task is:
 
 def print_board(item):
     """
-    生成提示词
+    Generates a natural language prompt describing Sudoku rules and the current board.
+
+    Args:
+        item (dict): The current game state containing the Sudoku board.
+
+    Returns:
+        str: Formatted prompt string for the LLM.
     """
     prompt = "Please solve this Sudoku puzzle. Fill in the empty cells (marked as 0) "
     prompt += "with numbers 1-9 so that each row, column, and 3x3 block contains "
@@ -48,7 +56,6 @@ def print_board(item):
     prompt += "Please provide your solution in exactly the same format as above, "
     prompt += "i.e., a 9x9 grid where each row is a list of numbers. "
     prompt += "Example format: Answer: [[1, 2, 3, 4, 5, 6, 7, 8, 9],[4, 5, 6, 7, 8, 9, 1, 2, 3],...]\n"
-    # 添加当前数独板的状态，使用代码格式
     prompt += "Current Sudoku board:\n"
     for row in item['current_board']:
         prompt += str(row) + "\n"
@@ -56,7 +63,13 @@ def print_board(item):
 
 def generate(seed=None):
     """
-    生成数独题目
+    Generates a new Sudoku puzzle with a specific difficulty.
+
+    Args:
+        seed (int, optional): Random seed for reproducibility.
+
+    Returns:
+        dict: Game state including the full solution, initial puzzle, and metadata.
     """
     item = {
         'score': 0,
@@ -70,37 +83,43 @@ def generate(seed=None):
     if seed is not None:
         random.seed(seed)
         
-    # 随机选择难度
     difficulty = random.choice(["easy", "moderate", "difficult"])
     item['difficulty'] = difficulty
     print("cur difficulty: ", difficulty)
-    # 生成完整的数独板
     item['solution'] = make_board()
     print("cur solution: ", item['solution'])
-    # 创建题目（通过移除数字）
     item['current_board'] = [row[:] for row in item['solution']]
     item['current_board']=make_puzzle(item['current_board'],difficulty)
-    
     return item
 
 def make_board():
-    """生成完整的数独解"""
+    """
+    Constructs a complete, valid Sudoku solution.
+
+    Returns:
+        List[List[int]]: A fully-filled 9x9 Sudoku board.
+    """
     board = [[0 for _ in range(size)] for _ in range(size)]
     
-    # 填充初始数独
     for i in range(size):
         for j in range(size):
             board[i][j] = int((i * sqrt_size + i//sqrt_size + j) % size) + 1
             
-    # 随机打乱
     for _ in range(random.randint(8, 15)):
         board = shuffle_board(board)
         
     return board
 
 def shuffle_board(board):
-    """打乱数独板"""
-    # 交换数字
+    """
+    Shuffles a complete board by swapping values and rows within blocks.
+
+    Args:
+        board (List[List[int]]): Sudoku solution board.
+
+    Returns:
+        List[List[int]]: Shuffled board maintaining Sudoku validity.
+    """
     num1 = random.randint(1, size)
     num2 = random.randint(1, size)
     while num2 == num1:
@@ -113,7 +132,6 @@ def shuffle_board(board):
             elif board[i][j] == num2:
                 board[i][j] = num1
                 
-    # 交换行
     if sqrt_size > 1:
         block = random.randint(0, sqrt_size-1)
         row1 = random.randint(0, sqrt_size-1) + block * sqrt_size
@@ -125,7 +143,14 @@ def shuffle_board(board):
         
 def remove_numbers_logically(current_board, cutoff):
     """
-    通过逻辑方式移除数字
+    Removes numbers from a board using logical constraint checks.
+
+    Args:
+        current_board (List[List[int]]): The filled Sudoku board.
+        cutoff (int): Number of digits to attempt removing logically.
+
+    Returns:
+        List[List[int]]: Partially filled board (the puzzle).
     """
     removed_items = 0
     for _ in range(size * 500):
@@ -135,15 +160,12 @@ def remove_numbers_logically(current_board, cutoff):
         i = random.randint(0, size-1)
         j = random.randint(0, size-1)
         
-        # 如果该位置已经是空的，继续下一次循环
         if current_board[i][j] == 0:
             continue
             
-        # 暂时保存当前数字
         temp = current_board[i][j]
         current_board[i][j] = 0
         
-        # 检查在这个位置是否只有一种可能的数字
         if len(get_possible_numbers(current_board,i, j)) == 1:
             removed_items += 1
         else:
@@ -152,46 +174,49 @@ def remove_numbers_logically(current_board, cutoff):
 
 def remove_numbers_randomly(current_board, cutoff):
     """
-    通过随机方式移除数字
+    Removes numbers from the board randomly while ensuring the puzzle remains solvable.
+
+    Args:
+        current_board (List[List[int]]): Board to modify.
+        cutoff (int): Number of removals.
+
+    Returns:
+        List[List[int]]: The updated puzzle board.
     """
     removed_items = 0
     for i in range(size):
         for j in range(size):
             if removed_items >= cutoff:
-                return current_board  # 修复：返回当前棋盘而不是直接返回None
-                
+                return current_board  
             if current_board[i][j] == 0:
                 continue
-                
-            # 暂时保存当前数字
             temp = current_board[i][j]
             current_board[i][j] = 0
-            
-            # 创建棋盘副本进行测试
             test_board = [row[:] for row in current_board]
             
-            # 检查是否有唯一解
             if solve_board(test_board):
                 removed_items += 1
             else:
-                # 如果没有唯一解，恢复原来的数字
                 current_board[i][j] = temp
     return current_board
 
 
 def get_possible_numbers(current_board, row, col):
     """
-    获取指定位置所有可能的数字
+    Returns all valid numbers for a given cell in the Sudoku grid.
+
+    Args:
+        current_board (List[List[int]]): The current board state.
+        row (int): Row index.
+        col (int): Column index.
+
+    Returns:
+        List[int]: Valid numbers that can go into the specified cell.
     """
     possible = set(range(1, size + 1))
-    
-    # 检查行
     possible -= set(current_board[row])
-    
-    # 检查列
     possible -= set(current_board[i][col] for i in range(size))
     
-    # 检查3x3宫格
     start_row = (row // sqrt_size) * sqrt_size
     start_col = (col // sqrt_size) * sqrt_size
     for i in range(start_row, start_row + sqrt_size):
@@ -202,7 +227,13 @@ def get_possible_numbers(current_board, row, col):
 
 def solve_board( board):
     """
-    使用回溯法解数独
+    Solves a Sudoku board using backtracking.
+
+    Args:
+        board (List[List[int]]): The Sudoku board to solve.
+
+    Returns:
+        bool: True if the board is solvable, False otherwise.
     """
     empty = find_empty(board)
     if not empty:
@@ -213,17 +244,21 @@ def solve_board( board):
     for num in range(1, size + 1):
         if is_safe(board, row, col, num):
             board[row][col] = num
-            
             if solve_board(board):
                 return True
-                
             board[row][col] = 0
             
     return False
 
 def find_empty(board):
     """
-    找到一个空位置
+    Finds the first empty cell (with value 0).
+
+    Args:
+        board (List[List[int]]): The board to search.
+
+    Returns:
+        Tuple[int, int] or None: Row and column of the empty cell or None if full.
     """
     for i in range(size):
         for j in range(size):
@@ -233,17 +268,23 @@ def find_empty(board):
 
 def is_safe( board, row, col, num):
     """
-    检查在指定位置放置数字是否安全
+    Checks whether placing a number at a specific position is valid.
+
+    Args:
+        board (List[List[int]]): Current board.
+        row (int): Row index.
+        col (int): Column index.
+        num (int): Number to check.
+
+    Returns:
+        bool: True if the number can be safely placed, False otherwise.
     """
-    # 检查行
     if num in board[row]:
         return False
         
-    # 检查列
     if num in [board[i][col] for i in range(size)]:
         return False
         
-    # 检查3x3宫格
     start_row = (row // sqrt_size) * sqrt_size
     start_col = (col // sqrt_size) * sqrt_size
     
@@ -256,7 +297,16 @@ def is_safe( board, row, col, num):
 
 
 def make_puzzle(current_board,difficulty):
-    """根据难度移除数字创建题目"""
+    """
+    Removes numbers from the full board based on difficulty level.
+
+    Args:
+        current_board (List[List[int]]): Full solution board.
+        difficulty (str): Difficulty level ('easy', 'moderate', 'difficult').
+
+    Returns:
+        List[List[int]]: Puzzle board with removed numbers.
+    """
     logical_cutoff, random_cutoff = difficulty_levels[difficulty]
     current_board = remove_numbers_logically(current_board,logical_cutoff)
     if random_cutoff > 0:
@@ -265,23 +315,27 @@ def make_puzzle(current_board,difficulty):
 
 def verify(item):
     """
-    验证答案是否正确：
-    1. 检查action中填入的数字与current_board中预设（非0）的数字是否一致；
-    2. 检查每一行、每一列以及每个3x3宫格是否满足数独规则。
-    如果无法转换action为列表或列表尺寸不匹配，则返回0。
+    Verifies the model's proposed Sudoku solution.
+
+    Checks:
+    - If filled values match original clues.
+    - If each row, column, and block is valid.
+
+    Args:
+        item (dict): Game state containing 'action' (the answer board) and 'current_board'.
+
+    Returns:
+        dict: Updated game state with score set to 1 (correct) or 0 (incorrect).
     """
     try:
-        # 如果item['action']为字符串，尝试转换为列表
         if isinstance(item['action'], str):
             board = ast.literal_eval(item['action'])
         else:
             board = item['action']
     except Exception as e:
-        # 转换失败
         item['score'] = 0
         return item
 
-    # 检查board是否为二维列表且行数正确
     if not isinstance(board, list) or len(board) != size:
         item['score'] = 0
         return item
@@ -292,27 +346,23 @@ def verify(item):
 
     current_board = item['current_board']
     
-    # 检查action中已填入的数字与current_board中预设的数字是否一致
     for i in range(size):
         for j in range(size):
             if current_board[i][j] != 0 and current_board[i][j] != board[i][j]:
                 item['score'] = 0
                 return item
 
-    # 检查每一行是否有效
     for row in board:
         if not is_valid_unit(row):
             item['score'] = 0
             return item
             
-    # 检查每一列是否有效
     for j in range(size):
         column = [board[i][j] for i in range(size)]
         if not is_valid_unit(column):
             item['score'] = 0
             return item
             
-    # 检查每个3x3宫格是否有效
     for block_row in range(0, size, sqrt_size):
         for block_col in range(0, size, sqrt_size):
             block = []
@@ -327,15 +377,11 @@ def verify(item):
 
 
 def is_valid_unit(unit):
-    """检查一个单元（行/列/宫格）是否有效"""
     return sorted(unit) == list(range(1, size + 1))
 
 
 
 def get_answer(self, modelname):
-    """
-    获取模型的回答并解析
-    """
     try:
         prompt = self.get_prompt()
         print("prompt: ", prompt)
@@ -351,28 +397,19 @@ def get_answer(self, modelname):
         return None
 
 def _parse_answer(self, response):
-    """
-    解析模型的回答，转换为二维数组
-    """
     try:
-        # 提取代码块内容
         start = response.find("```") + 3
         end = response.rfind("```")
         if start == -1 or end == -1:
             raise ValueError("No code block found in response")
             
-        # 获取代码块内容
         code_block = response[start:end].strip()
         
-        # 解析每一行
         board = []
         for line in code_block.split('\n'):
-            # 移除空行
             if not line.strip():
                 continue
-            # 提取数字
             try:
-                # 移除方括号并分割数字
                 numbers = [int(n.strip()) for n in line.strip('[]').split(',')]
                 if len(numbers) != self.size:
                     raise ValueError(f"Invalid row length: {len(numbers)}")
@@ -381,7 +418,6 @@ def _parse_answer(self, response):
                 print(f"Error parsing line '{line}': {e}")
                 raise
                 
-        # 验证行数
         if len(board) != self.size:
             raise ValueError(f"Invalid number of rows: {len(board)}")
             
@@ -421,7 +457,7 @@ class GameState(BaseModel):
     response: list
     prompt: str
     epoch: int
-# 生成初始游戏状态
+
 @app.post("/print_board", response_model=BoardRequest)
 def api_print_board(request: GameState):
     state = request.dict()
@@ -429,16 +465,13 @@ def api_print_board(request: GameState):
     return {"board": board_output}
 
 
-# 生成初始游戏状态
 @app.post("/generate", response_model=GameState)
 def api_generate(request: GenerateRequest):
     game_state = generate(request.seed)
     return game_state
 
-# 根据动作更新游戏状态
 @app.post("/verify", response_model=GameState)
 def api_verify(request: GameState):
-    # 从请求中获取游戏状态，并设置新的动作
     state = request.dict()
     updated_state = verify(state)
     return updated_state

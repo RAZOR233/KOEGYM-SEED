@@ -1,20 +1,25 @@
+# game_lib/3-2048/game_lib.py
+
+#Standard libraries
 import random
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import argparse
+
+#Commonly used open-source libraries
+import uvicorn
+from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments for launching the FastAPI server.
+
+    Returns:
+        argparse.Namespace: Contains host and port settings for the server.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
 
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 app = FastAPI()
@@ -43,17 +48,22 @@ Current epoch: {epoch}
 The answer you give should be one of 'LEFT', 'RIGHT', 'UP' and 'DOWN'
 '''
 
-# 新砖块生成机制：
-# 根据当前棋盘上的最大砖块，允许的新砖块取值为2的幂，
-# 范围为2 ~ (最大砖块 // 2)，若当前最大砖块小于4，则只能生成2。
+
 def get_new_tile_value(board):
+    """
+    Determines the value of a new tile to be added based on the current maximum tile.
+
+    Args:
+        board (List[List[int]]): Current 4x4 board state.
+
+    Returns:
+        int: New tile value (power of 2).
+    """
     max_tile = max(max(row) for row in board)
-    # 当棋盘还没有砖块或最大砖块小于4时，默认返回2
     if max_tile < 4:
         return 2
     allowed = []
     v = 2
-    # 允许的最大值为当前最大砖块的一半
     while v <= max_tile // 2:
         allowed.append(v)
         v *= 2
@@ -61,8 +71,16 @@ def get_new_tile_value(board):
         allowed = [2]
     return random.choice(allowed)
 
-# 打印游戏板
 def print_board(item):
+    """
+    Converts the board and game state into a natural language prompt for the model.
+
+    Args:
+        item (dict): Game state containing board and epoch info.
+
+    Returns:
+        str: A formatted string representing the game board and task instructions.
+    """
     board = item['board']
     board_size = len(board)
     output = ""
@@ -77,6 +95,15 @@ def print_board(item):
     return prompt
 
 def generate(seed: int):
+    """
+    Generates a new 2048 game instance with a seeded random initial board.
+
+    Args:
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        dict: Initialized game state with two starting tiles.
+    """
     item = {
         'score': 0,
         'is_end': False,
@@ -97,6 +124,15 @@ def generate(seed: int):
     return item
 
 def compress(board):
+    """
+    Compresses a 4x4 board to the left according to 2048 rules, combining tiles and scoring.
+
+    Args:
+        board (List[List[int]]): Current board state.
+
+    Returns:
+        Tuple[List[List[int]], int]: New board state after compression and score gained.
+    """
     new_board = [[0] * 4 for _ in range(4)]
     score = 0
     for i in range(4):
@@ -124,6 +160,15 @@ def rotate(board, times=1):
     return board
 
 def can_move(board):
+    """
+    Checks if there are any valid moves left on the board.
+
+    Args:
+        board (List[List[int]]): Current board state.
+
+    Returns:
+        bool: True if any moves are possible, else False.
+    """
     for i in range(4):
         for j in range(4):
             if board[i][j] == 0:
@@ -135,6 +180,15 @@ def can_move(board):
     return False
 
 def verify(item):
+    """
+    Applies the action (move) to the game board, updates the state, score, and adds a new tile.
+
+    Args:
+        item (dict): The game state including the board and selected action.
+
+    Returns:
+        dict: Updated game state after applying the move and adding a new tile.
+    """
     temp_board = [row[:] for row in item['board']]
     score = item['score']
     move = item['action'].strip().lower()
@@ -145,13 +199,10 @@ def verify(item):
     temp_board = rotate(temp_board, rotations[move])
     temp_board, gained_score = compress(temp_board)
     temp_board = rotate(temp_board, (4 - rotations[move]) % 4)
-
     score += gained_score
-
     empty_positions = [(i, j) for i in range(4) for j in range(4) if temp_board[i][j] == 0]
     if empty_positions:
         i, j = random.choice(empty_positions)
-        # 使用新的砖块生成机制
         temp_board[i][j] = get_new_tile_value(temp_board)
     item['board'] = temp_board
     item['score'] = score
@@ -159,6 +210,12 @@ def verify(item):
     return item
 
 def play_game(seed):
+    """
+    Runs a CLI-based local play session for 2048 using the same logic as the API.
+
+    Args:
+        seed (int): Random seed to initialize the game.
+    """
     item = generate(seed)
     while True:
         print("\nCurrent Board:")
@@ -179,7 +236,6 @@ def play_game(seed):
             print("Invalid move. Try again.")
             continue
 
-# --- 定义请求和响应数据模型 ---
 
 class BoardRequest(BaseModel):
     board: str
@@ -196,22 +252,18 @@ class GameState(BaseModel):
     prompt: str
     epoch: int
 
-# --- API 接口 ---
 
-# 生成初始游戏状态
 @app.post("/print_board", response_model=BoardRequest)
 def api_print_board(request: GameState):
     state = request.dict()
     board_output = print_board(state)
     return {"board": board_output}
 
-# 生成初始游戏状态
 @app.post("/generate", response_model=GameState)
 def api_generate(request: GenerateRequest):
     game_state = generate(request.seed)
     return game_state
 
-# 根据动作更新游戏状态
 @app.post("/verify", response_model=GameState)
 def api_verify(request: GameState):
     state = request.dict()

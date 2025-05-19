@@ -1,12 +1,21 @@
+# game_lib/14-Arrow-pathway/game_lib.py
+
+#Standard libraries
 import random
+import argparse
+import ast
+
+#Commonly used open-source libraries
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-import argparse
-import ast
+
 def parse_init():
     """
-    定义并解析命令行参数，用于服务部署地址与端口的配置。
+    Define and parse command-line arguments for server deployment settings.
+
+    Returns:
+        argparse.Namespace: Parsed arguments including host and port.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
@@ -28,12 +37,13 @@ Device Actions:{device_actions}
 """
 def generate(seed: int):
     """
-    根据种子生成一个 15x15 的迷宫，其中包含：
-      - 主角起点（P），放在与初始方向对应的边上；
-      - 固定 3 个必经途径点，分别标记为 "1", "2", "3"；
-      - 空白区域（E）和墙壁（X）。
-    同时随机确定初始方向，并根据曼哈顿路径规划生成一条完整解路，
-    并记录在解路过程中真正需要改变方向的设备动作（格式：[command, row, col]）。
+    Generate a solvable maze instance with a player, sequential waypoints, and solution path.
+
+    Args:
+        seed (int): Random seed for deterministic maze generation.
+
+    Returns:
+        dict: Game state containing maze layout, path solution, initial direction, device actions, etc.
     """
     random.seed(seed)
     n = random.randint(7,15)
@@ -62,8 +72,15 @@ def generate(seed: int):
     # --- 曼哈顿路径规划 ---
     def manhattan_path(start, end, order):
         """
-        生成从 start 到 end 的曼哈顿路径，
-        order 参数可选 "horizontal_first" 或 "vertical_first"
+        Generate a simple Manhattan path between two points using either horizontal-first or vertical-first strategy.
+
+        Args:
+            start (tuple): Starting coordinate (row, col).
+            end (tuple): Ending coordinate (row, col).
+            order (str): "horizontal_first" or "vertical_first".
+
+        Returns:
+            list: A list of (row, col) tuples representing the path.
         """
         path = [start]
         r0, c0 = start
@@ -99,7 +116,6 @@ def generate(seed: int):
         return path
 
     def get_direction(a, b):
-        """返回从 a 到 b 的移动方向"""
         r0, c0 = a
         r1, c1 = b
         if r1 == r0 and c1 == c0 + 1:
@@ -199,11 +215,15 @@ def generate(seed: int):
 
 def verify_actions(actions, maze, initial_direction):
     """
-    根据用户给定的设备动作序列模拟主角移动：
-      - 主角从起点 P 出发，初始方向为 initial_direction；
-      - 当到达设备动作预期位置时，自动触发设备指令，更新移动方向；
-      - 主角需依次经过迷宫中标记的数字（必经途径点），否则视为失败。
-    返回 1 表示验证成功，0 表示失败。
+    Simulate the player's movement through the maze with installed direction-changing devices.
+
+    Args:
+        actions (list): List of device instructions in the form [direction, row, col].
+        maze (list): 2D maze grid.
+        initial_direction (str): The player's initial movement direction.
+
+    Returns:
+        int: 1 if all waypoints are triggered in order, 0 otherwise.
     """
     n = len(maze)
     device_index = 0
@@ -265,9 +285,13 @@ def verify_actions(actions, maze, initial_direction):
 
 def verify_item(item):
     """
-    根据 item 中的动作序列验证解路是否有效，
-    并更新 item['score']（1 为成功，0 为失败）。
-    如果发生解析或验证时异常，则 score=0 并返回 item。
+    Validate the user-provided action sequence against the maze rules.
+
+    Args:
+        item (dict): Game state including maze, initial direction, and proposed action list.
+
+    Returns:
+        dict: Updated game state with computed score.
     """
     try:
         # 如果 action 是字符串，就用 literal_eval 把它变成列表
@@ -294,8 +318,13 @@ def verify_item(item):
 
 def print_board(item):
     """
-    将 item 中的迷宫 board 生成文本形式，
-    每行以空格分隔。
+    Generate a text-based board string with rules and metadata for the game round.
+
+    Args:
+        item (dict): Game state containing maze and metadata.
+
+    Returns:
+        str: Full prompt including maze string and metadata.
     """
     maze = item.get("maze", [])
     board_str = ""

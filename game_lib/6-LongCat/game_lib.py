@@ -1,15 +1,23 @@
+# game_lib/6-LongCat/game_lib.py
+
+#Standard libraries
 import random
 from collections import deque
 import copy
+import argparse
+import ast
+
+#Commonly used open-source libraries
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import ast
-import argparse
 
 def parse_init():
     """
-    定义并解析命令行参数，用于服务部署地址与端口的配置。
+    Parses command-line arguments to configure the host and port of the FastAPI server.
+
+    Returns:
+        argparse.Namespace: Parsed host and port parameters.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
@@ -28,15 +36,20 @@ Next, I will provide an n × n board containing a cat ('C'), empty spaces ('E'),
 Board:
 {board}
 """
-# ================================
-# 原始辅助函数（地图生成与验证逻辑）
-# ================================
+
 
 def is_solvable(game_map):
     """
-    使用 DFS 搜索判断游戏地图是否有解。
-    游戏规则：猫从初始位置出发，每次沿某一方向滑动，直至遇到墙壁，
-    路径上所有空格（'E'）将变为墙壁（'X'）。当所有空格都被填充时游戏胜利。
+    Determines whether a LongCat board is solvable via DFS.
+
+    Rules: The cat starts at 'C', slides in one direction until hitting a wall ('X'),
+    turning all traversed 'E' cells into walls. The goal is to cover all 'E' cells.
+
+    Args:
+        game_map (List[List[str]]): 2D board with 'E', 'X', and 'C'.
+
+    Returns:
+        bool: True if the board is solvable, else False.
     """
     rows = len(game_map)
     cols = len(game_map[0])
@@ -69,7 +82,6 @@ def is_solvable(game_map):
         key = board_to_key(board, cat_pos)
         if key in visited:
             return visited[key]
-        # 若所有空格均已填充，则找到解
         if all(cell != 'E' for row in board for cell in row):
             visited[key] = True
             return True
@@ -100,16 +112,19 @@ def is_solvable(game_map):
     return dfs(board, cat_pos)
 
 def init_map(rows, cols):
-    """初始化地图：边缘为 X，内部为 E"""
     return [['X' if r == 0 or r == rows - 1 or c == 0 or c == cols - 1 else 'E'
              for c in range(cols)] for r in range(rows)]
 
 def is_valid(r, c, rows, cols):
-    """检查坐标是否在地图范围内"""
     return 0 <= r < rows and 0 <= c < cols
 
 def get_neighbors(game_map, r, c, cell_type):
-    """获取指定类型的相邻单元格（上下左右）"""
+    """
+    Gets all 4-directional neighbors of a given cell that match a specific type.
+
+    Returns:
+        List[Tuple[int, int]]: List of neighbor coordinates.
+    """
     rows = len(game_map)
     cols = len(game_map[0])
     neighbors = []
@@ -120,7 +135,15 @@ def get_neighbors(game_map, r, c, cell_type):
     return neighbors
 
 def bfs_connectivity(game_map, start):
-    """使用 BFS 检查连通性，返回从 start 出发可到达的所有 'E' 单元格"""
+    """
+    Uses BFS to determine the connected 'E' area from a starting cell.
+
+    Args:
+        start (Tuple[int, int]): Starting cell.
+
+    Returns:
+        Set[Tuple[int, int]]: All reachable 'E' cells.
+    """
     rows = len(game_map)
     cols = len(game_map[0])
     visited = set()
@@ -137,9 +160,12 @@ def bfs_connectivity(game_map, start):
 
 def add_random_walls(game_map, rows, cols):
     """
-    随机添加少量内部墙壁，确保剩余 'E' 连通。
-    添加约内部单元格数量的 1/5 个墙壁。
+    Randomly adds a few internal walls while maintaining connectivity among empty cells.
+
+    Modifies:
+        game_map (List[List[str]]): In-place modification.
     """
+
     internal_cells = [(r, c) for r in range(1, rows-1)
                       for c in range(1, cols-1) if game_map[r][c] == 'E']
     num_walls = len(internal_cells) // 5
@@ -156,8 +182,12 @@ def add_random_walls(game_map, rows, cols):
 
 def place_cat(game_map, rows, cols):
     """
-    放置猫咪到叶子节点（只有一个相邻 'E'）或随机一个 'E' 单元格
+    Places the cat ('C') on a cell, preferably one with only one adjacent 'E'.
+
+    Raises:
+        RuntimeError: If no empty cell is available.
     """
+
     leaves = []
     all_e = []
     for r in range(1, rows-1):
@@ -176,14 +206,19 @@ def place_cat(game_map, rows, cols):
 
 def generate_map(seed: int):
     """
-    生成完整地图：不断生成-检验，直至生成一个保证有解的地图。
-    返回的 item 中包含地图信息及其他游戏状态数据。
+    Generates a valid and solvable LongCat board with random size and layout.
+
+    Args:
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        dict: A dictionary representing the initial game state including the map.
     """
     random.seed(seed)
     item = {
         "score": 0,
         "is_end": False,
-        "action": "",       # 用户提交的移动序列，格式为列表，如 ['right', 'down', ...]
+        "action": "",       # list,e.g. ['right', 'down', ...]
         "response": [],
         "prompt": "",
         "epoch": 1,
@@ -206,22 +241,26 @@ def generate_map(seed: int):
 
 def verify(actions, game_map):
     """
-    验证移动序列是否能填充所有空格：
-      - 猫从初始位置出发，沿给定方向滑动直到遇到墙壁，
-        路径上所有 'E' 变为 'X'（猫移动后原位置也变为 'X'）。
-      - 最终所有 'E' 均被填充，则返回 1，否则返回 0。
+    Verifies whether the given sequence of moves successfully fills all 'E' cells.
+
+    Args:
+        actions (List[str]): Sequence of moves ('up', 'down', etc.).
+        game_map (List[List[str]]): The initial map with 'C', 'E', and 'X'.
+
+    Returns:
+        int: 1 if successful, 0 otherwise.
     """
     current_map = [row.copy() for row in game_map]
     rows = len(current_map)
     cols = len(current_map[0]) if rows > 0 else 0
 
-    # 寻找猫的初始位置
+    # Cat initial place
     cat_pos = None
     for r in range(rows):
         for c in range(cols):
             if current_map[r][c] == 'C':
                 cat_pos = (r, c)
-                current_map[r][c] = 'X'  # 猫移动后原位置变为 X
+                current_map[r][c] = 'X'  
                 break
         if cat_pos:
             break
@@ -265,8 +304,13 @@ def verify(actions, game_map):
 
 def verify_game(item):
     """
-    根据 item 中的 action 和 game_map 验证移动序列能否填充所有空格，
-    并更新 item 中的 score 字段。
+    Wrapper function that verifies the player's move sequence and updates score.
+
+    Args:
+        item (dict): Game state including 'action' and 'game_map'.
+
+    Returns:
+        dict: Updated game state with score field modified.
     """
     actions = item.get("action")
     if isinstance(actions, str):
@@ -282,14 +326,20 @@ def verify_game(item):
 
 def print_board(item):
     """
-    将 game_map 转换为字符串格式，每一行以空格分隔、换行连接
+    Converts the game map into a textual string embedded into the prompt template.
+
+    Args:
+        item (dict): Game state containing 'game_map'.
+
+    Returns:
+        str: Final prompt string with rules and board.
     """
     game_map = item.get("game_map", [])
     board_str = "\n".join([" ".join(row) for row in game_map])
     return game_prompt.format(board=board_str)
 
 # ================================
-# FastAPI 接口及数据模型
+# FastAPI API
 # ================================
 
 class BoardRequest(BaseModel):

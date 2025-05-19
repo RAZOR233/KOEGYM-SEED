@@ -1,24 +1,29 @@
+# game_lib/12-sokoban/game_lib.py
+
+#Standard libraries
 import random
-import numpy as np
+import ast
+import argparse
 from collections import deque
+
+#Commonly used open-source libraries
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import ast
-import argparse
+
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Define and parse command-line arguments for server deployment settings.
+
+    Returns:
+        argparse.Namespace: Parsed arguments including host and port.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 game_prompt = """
@@ -49,8 +54,17 @@ Game Board:
 {board}
 """
 app = FastAPI()
-# 辅助函数：递归转换 NumPy 类型到原生 Python 类型
+
 def convert_numpy_types(item):
+    """
+    Recursively convert NumPy types (e.g., np.int, np.float, np.ndarray) to native Python types.
+
+    Args:
+        item (Any): A nested structure (dict, list, tuple) possibly containing NumPy types.
+
+    Returns:
+        Any: Structure with all NumPy types converted to native Python types.
+    """
     if isinstance(item, dict):
         return {k: convert_numpy_types(v) for k, v in item.items()}
     elif isinstance(item, list):
@@ -65,12 +79,26 @@ def convert_numpy_types(item):
         return item.tolist()
     else:
         return item
+    
 # 判断 (x,y) 是否为合法移动位置（在地图范围内且不是墙）
 def is_valid_move(map_data, width, height, x, y):
     return 0 <= x < width and 0 <= y < height and map_data[y][x] != "X"
 
 # 利用 BFS 判断从 start 到 end 是否存在路径（只避开墙壁 X）
 def is_path_exists(map_data, width, height, start, end):
+    """
+    Use BFS to determine if a path exists from start to end, avoiding walls ('X').
+
+    Args:
+        map_data (list): 2D game map.
+        width (int): Width of the map.
+        height (int): Height of the map.
+        start (tuple): Start position (x, y).
+        end (tuple): Target position (x, y).
+
+    Returns:
+        bool: True if a path exists, False otherwise.
+    """
     visited = [[False] * width for _ in range(height)]
     queue = deque([start])
     visited[start[1]][start[0]] = True
@@ -89,6 +117,18 @@ def is_path_exists(map_data, width, height, start, end):
 
 # 检查箱子是否被墙壁“夹住”
 def is_box_in_corner(map_data, width, height, box_pos):
+    """
+    Check if a box is blocked in a corner by two perpendicular walls.
+
+    Args:
+        map_data (list): 2D game map.
+        width (int): Width of the map.
+        height (int): Height of the map.
+        box_pos (tuple): Box position (x, y).
+
+    Returns:
+        bool: True if the box is not trapped, False if it is in a dead corner.
+    """
     x, y = box_pos
     # 这里简单检查左右或上下组合
     right_bottom_blocked = (map_data[y + 1][x] == 'X' and map_data[y][x - 1] == 'X') if (y + 1 < height and x - 1 >= 0) else False
@@ -101,6 +141,19 @@ def is_box_in_corner(map_data, width, height, box_pos):
 
 # 简单判断箱子是否可向 target 方向移动
 def is_box_movable(map_data, width, height, box_pos, target_pos):
+    """
+    Determine if a box can be pushed toward a target position without obstruction.
+
+    Args:
+        map_data (list): 2D map.
+        width (int): Width of the map.
+        height (int): Height of the map.
+        box_pos (tuple): Current box position.
+        target_pos (tuple): Target goal position.
+
+    Returns:
+        bool: True if movement is feasible, False otherwise.
+    """
     x, y = box_pos
     tx, ty = target_pos
     directions = []
@@ -128,6 +181,19 @@ def is_box_movable(map_data, width, height, box_pos, target_pos):
 
 # 计算在给定箱子分布下，玩家从 start 可到达的所有位置
 def get_reachable_positions(map_data, width, height, start, boxes):
+    """
+    Get all reachable positions from the player's start position, avoiding boxes and walls.
+
+    Args:
+        map_data (list): Game map.
+        width (int): Width of map.
+        height (int): Height of map.
+        start (tuple): Player start position.
+        boxes (list): List of box positions.
+
+    Returns:
+        set: Reachable coordinates as (x, y) tuples.
+    """
     reachable = set()
     queue = deque([start])
     obstacles = set(boxes)
@@ -147,6 +213,20 @@ def get_reachable_positions(map_data, width, height, start, boxes):
 # 利用 BFS 在状态空间中搜索：状态由 (player, tuple(sorted(boxes))) 表示，
 # 判断是否可以将所有箱子推到目标位置上
 def is_solvable_state(map_data, width, height, target_positions, player, boxes):
+    """
+    Use BFS in the state space to determine if the puzzle is solvable.
+
+    Args:
+        map_data (list): 2D map.
+        width (int): Map width.
+        height (int): Map height.
+        target_positions (list): List of target coordinates.
+        player (tuple): Player start position.
+        boxes (list): Initial box positions.
+
+    Returns:
+        bool: True if the puzzle is solvable, False otherwise.
+    """
     initial_state = (player, tuple(sorted(boxes)))
     visited = set([initial_state])
     queue = deque([initial_state])
@@ -176,6 +256,17 @@ def is_solvable_state(map_data, width, height, target_positions, player, boxes):
 
 # 生成地图，并保证生成的关卡有解
 def generate(seed, width=8, height=8):
+    """
+    Generate a Sokoban map with a given seed and ensure it's solvable.
+
+    Args:
+        seed (int): Random seed for deterministic generation.
+        width (int): Width of the game map.
+        height (int): Height of the game map.
+
+    Returns:
+        dict: Game state containing map, positions, and metadata.
+    """
     random.seed(seed)
     n = random.randint(1,3)
     while True:
@@ -258,6 +349,15 @@ def generate(seed, width=8, height=8):
 
 # 打印地图，叠加显示目标、箱子和玩家（防止目标被覆盖）
 def print_board(state):
+    """
+    Generate a formatted Sokoban prompt with map state and rules.
+
+    Args:
+        state (dict): Game state including map, player, boxes, and targets.
+
+    Returns:
+        str: Formatted prompt string with game rules and board.
+    """
     width = state["width"]
     height = state["height"]
     map_data = state["map_data"]
@@ -277,8 +377,16 @@ def print_board(state):
     for row in display_map:
         output=output+"".join(row)+'\n'
     return game_prompt.format(board=output)
+
 # 将地图保存为图片
 def save_map_as_image(state, filename="game_map.png"):
+    """
+    Render the game map as an image and save it to disk.
+
+    Args:
+        state (dict): Game state dictionary.
+        filename (str): Output filename for the image.
+    """
     width = state["width"]
     height = state["height"]
     map_data = state["map_data"]
@@ -329,6 +437,13 @@ def save_map_as_image(state, filename="game_map.png"):
 
 # 玩家移动：若目标位置为箱子，则尝试推动箱子
 def move_player(state, direction):
+    """
+    Attempt to move the player in the given direction, and push boxes if needed.
+
+    Args:
+        state (dict): Current game state.
+        direction (tuple): Direction vector (dx, dy).
+    """
     map_data = state["map_data"]
     width = state["width"]
     height = state["height"]
@@ -358,10 +473,28 @@ def move_player(state, direction):
 
 # 判断是否胜利：所有箱子都在目标上
 def check_victory(state):
+    """
+    Check whether all boxes have been moved onto the target positions.
+
+    Args:
+        state (dict): Game state.
+
+    Returns:
+        bool: True if all boxes are on targets, False otherwise.
+    """
     return set(state["box_positions"]) == set(state["target_positions"])
 
 # 根据动作序列移动，途中若胜利则返回 True
 def verify(state):
+    """
+    Simulate a sequence of moves and check if the puzzle is solved.
+
+    Args:
+        state (dict): Game state including 'action' (list of moves).
+
+    Returns:
+        dict: Updated game state with new score and box positions.
+    """
     try:
         # 如果item['action']为字符串，尝试转换为列表
         if isinstance(state['action'], str):

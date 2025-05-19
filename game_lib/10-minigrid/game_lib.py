@@ -1,3 +1,4 @@
+# game_lib/10-minigrid/game_lib.py
 from __future__ import annotations
 import gymnasium as gym
 from enum import IntEnum
@@ -7,21 +8,20 @@ import random
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import uuid  # 用于生成唯一标识符
+import uuid  
 from typing import Optional
 import argparse
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments for FastAPI deployment configuration.
+
+    Returns:
+        argparse.Namespace: Parsed arguments containing `host` and `port`.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 app = FastAPI()
@@ -151,6 +151,15 @@ def print_board(item):
 
 # 使用函数创建代理状态（功能风格实现）
 def create_agent(env_name="MiniGrid-Empty-5x5-v0", max_steps=100):
+    """
+    Initializes a symbolic MiniGrid environment and wraps it with metadata including:
+    - observation/action tracking
+    - inventory and agent direction
+    - episode metadata
+
+    Returns:
+        dict: Agent state dict including env object and config
+    """
     if not env_name.startswith("MiniGrid-"):
         raise ValueError(f"Invalid MiniGrid environment: {env_name}")
     
@@ -200,6 +209,16 @@ def get_step_prompt(obs_text: str) -> str:
 
 # 生成可读的观测描述
 def get_observation_text(agent: dict, obs: dict) -> str:
+    """
+    Generates a human-readable summary of the current MiniGrid symbolic state.
+
+    Args:
+        agent (dict): Agent state (position, carrying object, direction).
+        obs (dict): Symbolic observation with mission and image grid.
+
+    Returns:
+        str: Rich description of current state, mission, and inventory.
+    """
     mission = obs['mission']
     
     dir_names = {
@@ -232,6 +251,21 @@ def get_observation_text(agent: dict, obs: dict) -> str:
     return observation_text
 
 def verify(item: dict):
+    """
+    Executes the agent's action in the symbolic MiniGrid environment and updates the state.
+
+    - Converts action string to index.
+    - Performs the step and updates:
+        - position
+        - direction
+        - inventory
+        - score
+        - is_end flag
+    - Computes whether the game should terminate (goal reached or max step).
+
+    Returns:
+        dict: Updated game state after applying the action.
+    """
     old_pos = item["agent_pos"]
     old_dir = item["agent_dir"]
     item['epoch']+=1
@@ -270,6 +304,17 @@ def verify(item: dict):
     return item
 
 def generate(seed):
+    """
+    Generates a new symbolic MiniGrid episode with a fixed seed.
+
+    - Randomly samples an environment from `env_names`.
+    - Extracts symbolic observation and formats it into a reasoning prompt.
+    - Stores the env object in global `ENV_STORE`.
+
+    Returns:
+        dict: Initial game state including uid, prompt, env_name, and metadata.
+    """
+
     max_steps = 100
     random.seed(seed)
     env_name = random.sample(env_names, 1)[0]
@@ -293,7 +338,7 @@ def generate(seed):
 
     return item
 
-# --- 定义请求和响应数据模型 ---
+
 
 class BoardRequest(BaseModel):
     board: str
@@ -318,7 +363,7 @@ class GameState(BaseModel):
     prompt: str
     epoch: int
 
-# --- API 接口 ---
+# --- API ---
 
 # 生成游戏板内容
 @app.post("/print_board", response_model=BoardRequest)

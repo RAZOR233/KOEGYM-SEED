@@ -1,23 +1,30 @@
+# game_lib/5-light_out_game/game_lib.py
+
+#Standard libraries
 import random
 import re
+import argparse
+
+#Commonly used open-source libraries
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import argparse
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments for launching the FastAPI server.
+
+    Returns:
+        argparse.Namespace: Object containing host and port settings.
     """
+
     parser = argparse.ArgumentParser(description="Data creation utility")
 
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
+
 app = FastAPI()
 light_out_game_prompt='''
 You are a good game problem-solver, I'll give you a game board and rules.\nYour task is:\n- First, give your answer according to the game board and rules.\n- Second, output the answer in the required format. The last line of your response should be in the following format: 'Answer: $YOUR_ANSWER' (without quotes), where YOUR_ANSWER is your final answer to the question,e.g.'Answer: (0,2), (2,1)'
@@ -79,25 +86,37 @@ All the lights have been switched off. So, your answer can be 'Answer: (2,2) ,(0
 Board:
 {board}
 '''
+
 def toggle(board, i, j):
-    """切换指定位置及其相邻位置的灯状态"""
+    """
+    Toggles the light at (i, j) and its orthogonal neighbors (up, down, left, right).
+
+    Args:
+        board (List[List[int]]): The game board.
+        i (int): Row index.
+        j (int): Column index.
+    """
     n = len(board)
-    board[i][j] ^= 1  # 切换自身
-    # 切换上邻
+    board[i][j] ^= 1  
     if i > 0:
         board[i-1][j] ^= 1
-    # 切换下邻
     if i < n - 1:
         board[i+1][j] ^= 1
-    # 切换左邻
     if j > 0:
         board[i][j-1] ^= 1
-    # 切换右邻
     if j < n - 1:
         board[i][j+1] ^= 1
 
-# 打印游戏板
 def print_board(item):
+    """
+    Converts the current game board into a formatted prompt string for the model.
+
+    Args:
+        item (dict): The game state containing the current board.
+
+    Returns:
+        str: A natural language prompt with the game rules and current board.
+    """
     board=item['board']
     board_size=len(board)
     output=""
@@ -109,9 +128,16 @@ def print_board(item):
     return light_out_game_prompt.format(board=output)
 
 def generate(seed):
-    """生成有解的初始棋盘"""
+    """
+    Generates a new solvable 'Lights Out' puzzle instance based on a seed.
+
+    Args:
+        seed (int): Random seed to initialize puzzle.
+
+    Returns:
+        dict: A dictionary representing the initial game state.
+    """
     random.seed(seed)
-    # 随机选择游戏规模n，例如3到5之间的整数
     level = random.randint(1,15)
     if level <= 5:
         n = 3
@@ -119,12 +145,9 @@ def generate(seed):
     else:
         n = 4
         k = level-4
-    # 创建全灭的初始棋盘
     board = [[0 for _ in range(n)] for _ in range(n)]
-    # 生成所有可能的位置并随机选择k个不同的位置
     all_positions = [(i, j) for i in range(n) for j in range(n)]
     selected_positions = random.sample(all_positions, k)
-    # 应用这些点击到初始棋盘上
     for i, j in selected_positions:
         toggle(board, i, j)
     item = {
@@ -140,32 +163,36 @@ def generate(seed):
     return item
 
 def verify(item):
-    """验证解题序列是否正确"""
+    """
+    Verifies whether a sequence of light presses results in turning off all lights.
+
+    Args:
+        item (dict): The game state, including initial board and user action string.
+
+    Returns:
+        dict: Updated game state with `score = 1` if the solution is correct, otherwise 0.
+    """
+
     board=item['board']
     action_str=item['action']
     answer = [
-            tuple(map(int, re.findall(r'\d+', item.strip())))  # 只提取数字并转化为 tuple
-            for item in action_str.split('),') if item.strip()  # 忽略空值
+            tuple(map(int, re.findall(r'\d+', item.strip())))  
+            for item in action_str.split('),') if item.strip() 
         ]
     
-    
     if not board:
-        item['score']=0  # 空棋盘情况
+        item['score']=0  
     n = len(board)
-    # 复制初始棋盘以避免修改原数据
     current = [row.copy() for row in board]
-    # 应用所有解题步骤
     for step in answer:
         if len(step) != 2:
             item['score']=0
             return item
         i, j = step
-        # 检查坐标是否合法
         if i < 0 or i >= n or j < 0 or j >= n:
             item['score']=0
             return item
         toggle(current, i, j)
-    # 检查所有灯是否已灭
     for row in current:
         if any(row):
             item['score']=0
@@ -177,7 +204,6 @@ def test():
     item1={}
     item2={}
     item3={}
-    # 测试用例1：正确解（点击 (0,0) 熄灭所有灯）
     item1['board'] = [
         [1, 1, 0],
         [1, 0, 0],
@@ -186,7 +212,6 @@ def test():
     item1['action'] = [(0, 0)]
     assert verify(item1)['score'] == 1, "测试用例1失败：正确解未被接受"
 
-    # 测试用例2：非法坐标（点击越界的 (2,2)）
     item2['board'] = [
         [1, 0],
         [0, 1]
@@ -194,7 +219,6 @@ def test():
     item2['action'] = [(2, 2)]  # 2x2 棋盘的合法坐标为 (0,0)-(1,1)
     assert verify(item2)['score'] == 0, "测试用例2失败：非法坐标未被检测"
 
-    # 测试用例3：错误解（点击 (0,0) 后仍有灯亮）
     item3['board'] = [
 		[1, 1, 1],
 		[0, 1, 0],
@@ -220,7 +244,7 @@ class GameState(BaseModel):
     response: list
     prompt: str
     epoch: int
-# 生成初始游戏状态
+
 @app.post("/print_board", response_model=BoardRequest)
 def api_print_board(request: GameState):
     state = request.dict()
@@ -228,16 +252,13 @@ def api_print_board(request: GameState):
     return {"board": board_output}
 
 
-# 生成初始游戏状态
 @app.post("/generate", response_model=GameState)
 def api_generate(request: GenerateRequest):
     game_state = generate(request.seed)
     return game_state
 
-# 根据动作更新游戏状态
 @app.post("/verify", response_model=GameState)
 def api_verify(request: GameState):
-    # 从请求中获取游戏状态，并设置新的动作
     state = request.dict()
     updated_state = verify(state)
     return updated_state

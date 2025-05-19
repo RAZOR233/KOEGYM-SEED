@@ -1,12 +1,17 @@
+# game_lib/15-emoji_connect/game_lib.py
+
+#Standard libraries
 from typing import List
 import random
-import numpy as np
 import time
+import ast
+import argparse
+
+#Commonly used open-source libraries
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import ast
-import argparse
 
 def parse_init():
     """

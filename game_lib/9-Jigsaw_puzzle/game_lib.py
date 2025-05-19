@@ -1,25 +1,29 @@
-from PIL import Image, ImageDraw, ImageFont
+# game_lib/9-Jigsaw_puzzle/game_lib.py
+
+#Standard libraries
 import os
 import random
 import string
 import base64
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import ast
 import argparse
 
+#Commonly used open-source libraries
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from PIL import Image, ImageDraw, ImageFont
+
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments for server deployment.
+
+    Returns:
+        argparse.Namespace: Object containing parsed host and port parameters.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 app = FastAPI()
@@ -32,12 +36,25 @@ As shown in the picture, you need to solve the puzzle game. The top of the image
 def print_board(item):
     return game_prompt
 
-# Function to encode the image
 def encode_image(image_path: str):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
         
 def generate(seed):
+    """
+    Generates a jigsaw puzzle task by slicing an image into pieces, assigning random labels,
+    rendering the puzzle board with blank positions and options, and encoding it into base64 format.
+
+    Args:
+        seed (int): Random seed to ensure reproducibility.
+
+    Returns:
+        dict: A dictionary containing the game state, including:
+            - answer: the correct mapping as a list of (position, label)
+            - image_path: local file path of the rendered puzzle
+            - base64_image: base64-encoded string of the image
+            - other default state fields (score, is_end, etc.)
+    """
     item = {
         'score': 0,
         'is_end': False,
@@ -145,8 +162,6 @@ def generate(seed):
         y = row * (block_height + LETTER_HEIGHT + SPACING)
         fragments.paste(piece, (x, y))
 
-    # fragments.save(os.path.join(output_dir, "puzzle_options.png"))
-
     combined_width = max(board.width, fragments.width)
     combined_height = board.height + fragments.height
     combined_image = Image.new('RGB', (combined_width, combined_height), 'white')
@@ -161,6 +176,15 @@ def generate(seed):
 
 
 def verify(item):
+    """
+    Compares the user-submitted answer with the correct answer using set intersection.
+
+    Args:
+        item (dict): Game state, including the user's `action` and the correct `answer`.
+
+    Returns:
+        dict: Updated item with computed score (fraction of correct mappings).
+    """
     correct_answer = item['answer']
     # 尝试将 item['action'] 转换为列表结构
     try:

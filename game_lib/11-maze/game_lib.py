@@ -1,23 +1,27 @@
+# game_lib/11-maze/game_lib.py
+
+#Standard libraries
 import random
-import numpy as np
 import time
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import ast
 import argparse
 
+#Commonly used open-source libraries
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import numpy as np
+
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments for FastAPI server deployment.
+
+    Returns:
+        argparse.Namespace: Parsed arguments with 'host' and 'port'.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 app = FastAPI()
@@ -38,7 +42,7 @@ You need to output your answer as a list of these strings，e.g."Answer: ['up','
 Maze Board:
 {board}
 """
-# 辅助函数：递归转换 NumPy 类型到原生 Python 类型
+
 def convert_numpy_types(item):
     if isinstance(item, dict):
         return {k: convert_numpy_types(v) for k, v in item.items()}
@@ -57,7 +61,13 @@ def convert_numpy_types(item):
 
 def print_board(item):
     """
-    生成提示词
+    Generate a formatted maze game prompt from the character matrix.
+    
+    Args:
+        item (dict): Contains 'char_maze' as a list of character rows.
+
+    Returns:
+        str: The complete game prompt with rules and visual maze layout.
     """
     output=""
     for line in item['char_maze']:
@@ -66,8 +76,14 @@ def print_board(item):
 
 def generate(seed, generate_method='PRIM'):
     """
-    根据种子、迷宫尺寸与生成方法构造迷宫，
-    返回字符形式的迷宫、起点与终点坐标。
+    Generate a new maze game state based on the given seed and generation method.
+
+    Args:
+        seed (int): Random seed for reproducibility.
+        generate_method (str): Algorithm to use, either 'PRIM' or 'DFS'.
+
+    Returns:
+        dict: A dictionary representing the game state including maze, start, end, and metadata.
     """
     n=random.randint(10,30)
     scale = (n,n)
@@ -93,8 +109,14 @@ def generate(seed, generate_method='PRIM'):
 
 def generate_maze_map(method, size):
     """
-    根据指定方法（"DFS" 或 "PRIM"）生成数值迷宫，
-    同时打印生成所用时间。
+    Dispatch to the selected maze generation algorithm and log the generation time.
+
+    Args:
+        method (str): 'PRIM' or 'DFS'.
+        size (tuple): Base size of the maze before expansion.
+
+    Returns:
+        np.ndarray: A binary maze map (0 = path, 1 = wall).
     """
     start_time = time.time()
     if method == "DFS":
@@ -109,7 +131,13 @@ def generate_maze_map(method, size):
 
 def _prim_maze(size):
     """
-    基于PRIM算法生成迷宫，内部先缩小尺寸后再还原为标准迷宫图。
+    Generate a maze using the Prim algorithm with compressed representation.
+
+    Args:
+        size (tuple): Base maze size.
+
+    Returns:
+        np.ndarray: Binary maze map.
     """
     # 此处将基础尺寸再缩小一半
     size = (size[0] // 2, size[1] // 2)
@@ -124,8 +152,12 @@ def _prim_maze(size):
 
 def prim_det(maze, memory, size):
     """
-    PRIM算法核心——从内存中随机选取一个格子，
-    并从可走方向中随机挑选一条路径扩展迷宫结构。
+    Core step in Prim's algorithm to expand the maze from a random frontier cell.
+
+    Args:
+        maze (np.ndarray): 3D array tracking visited state and connections.
+        memory (list): Frontier list for candidate expansion cells.
+        size (tuple): Dimensions of the maze.
     """
     index = np.array(random.choice(memory))
     direction = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
@@ -153,7 +185,13 @@ def prim_det(maze, memory, size):
 
 def prim2map(maze):
     """
-    将PRIM算法生成的内部数据结构转换为最终的二维迷宫（0表示通路，1表示墙）。
+    Convert the 3D Prim maze into a 2D binary matrix for gameplay.
+
+    Args:
+        maze (np.ndarray): 3D maze representation.
+
+    Returns:
+        np.ndarray: 2D maze grid (0 = path, 1 = wall).
     """
     shape = maze.shape[:2]
     maze_map = np.ones((shape[0] * 2 - 1, shape[1] * 2 - 1), dtype=np.uint8)
@@ -170,7 +208,13 @@ def prim2map(maze):
 
 def _dfs_maze(size):
     """
-    基于DFS算法生成迷宫，保证路径唯一性。
+    Generate a maze using depth-first search (DFS) with backtracking.
+
+    Args:
+        size (tuple): Maze dimensions.
+
+    Returns:
+        np.ndarray: Binary maze (0 = path, 1 = wall).
     """
     maze = np.empty((size[0], size[1], 2), dtype=np.uint8)
     maze[:, :, 0] = 1
@@ -190,8 +234,15 @@ def _dfs_maze(size):
 
 def judge_direction(maze, index, size):
     """
-    DFS搜索时判断从当前节点出发可以走哪些方向。
-    若某方向附近已有过多路径则排除，以保证迷宫的稀疏性。
+    Determine legal directions to expand during DFS, avoiding dense path areas.
+
+    Args:
+        maze (np.ndarray): 3D maze representation.
+        index (np.ndarray): Current DFS position.
+        size (tuple): Maze size.
+
+    Returns:
+        list: Valid next positions.
     """
     direction = np.array([[0, 1], [1, 0], [-1, 0], [0, -1]])
     legal_direction = []
@@ -216,8 +267,13 @@ def judge_direction(maze, index, size):
 
 def init_maze(numeric_maze):
     """
-    初始化迷宫：将起点固定在左上角，
-    终点为所有通路中（乘以权重后）最大的点。
+    Select the start and end positions for the maze.
+
+    Args:
+        numeric_maze (np.ndarray): Binary maze matrix.
+
+    Returns:
+        tuple: (start_position, end_position)
     """
     start = (0, 0)
     road = np.argwhere(numeric_maze == 0)
@@ -226,9 +282,19 @@ def init_maze(numeric_maze):
 
 def convert_to_char_matrix(numeric_maze, start, end):
     """
-    将数值迷宫转换为字符矩阵，
-    其中'o'表示通路，'*'表示墙壁，
-    并分别标注起点（I）和终点（X）。
+    Convert binary maze to a character matrix with symbols:
+    - 'I': start
+    - 'X': end
+    - 'o': path
+    - '*': wall
+
+    Args:
+        numeric_maze (np.ndarray): Binary maze map.
+        start (tuple): Start position.
+        end (tuple): End position.
+
+    Returns:
+        list: Character matrix representing the maze.
     """
     char_maze = []
     for i in range(numeric_maze.shape[0]):
@@ -245,10 +311,13 @@ def convert_to_char_matrix(numeric_maze, start, end):
 
 def verify(item):
     """
-    验证一系列动作能否正确从起点走到终点：
-      - 非法动作（非 'up', 'down', 'left', 'right'）将返回False
-      - 碰壁或越界也返回False
-      - 中途提前到达终点也视为失败
+    Verify whether a given sequence of moves leads from start to end.
+
+    Args:
+        item (dict): Contains char_maze, action list, start, and end positions.
+
+    Returns:
+        dict: Updated item with score = 1 (success) or 0 (failure).
     """
     dir_map = {
         'up': (-1, 0),
@@ -292,7 +361,6 @@ def verify(item):
     return item
 
 def print_maze(maze):
-    """打印字符迷宫的每一行。"""
     print("\n".join([" ".join(row) for row in maze]))
 
 class BoardRequest(BaseModel):

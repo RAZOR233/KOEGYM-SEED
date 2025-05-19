@@ -1,27 +1,32 @@
+# game_lib/8-word_puzzle/game_lib.py
+
+#Standard libraries
 import math
+import ast
+import argparse
 import random
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
 from typing import Tuple, List, Dict
 import os
 import base64
+
+#Commonly used open-source libraries
+from PIL import Image, ImageDraw, ImageFont
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import ast
-import argparse
+
 
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Parses command-line arguments to configure the FastAPI server host and port.
+
+    Returns:
+        argparse.Namespace: Parsed argument object with 'host' and 'port'.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
 game_prompt='''
@@ -38,13 +43,21 @@ def print_board(item):
     for i, clue in enumerate(item['clues'], 1):
         output+=(f"{i}. {clue}\n")
     return game_prompt.format(clues=output)
-# Function to encode the image
+
 def encode_image(image_path: str):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 def load_word_bank(word_clues_path: str = "high_quality_word_clues.csv"):
-    """加载单词和提示，并筛选出符合条件的单词"""
+    """
+    Loads word and clue pairs from CSV and filters invalid entries.
+
+    Args:
+        word_clues_path (str): Path to the CSV file.
+
+    Returns:
+        Dict[str, str]: Dictionary mapping words to clues.
+    """
     word_bank = pd.read_csv(word_clues_path)
     word_bank['word'] = word_bank['word'].str.strip().str.lower()
     word_bank = word_bank.drop_duplicates('word').set_index('word')['clue'].to_dict()
@@ -52,7 +65,17 @@ def load_word_bank(word_clues_path: str = "high_quality_word_clues.csv"):
     return valid_words
 
 def select_words(valid_words: Dict[str, str], num: int, seed: int):
-    """根据权重随机选择候选单词，并返回单词列表和对应提示"""
+    """
+    Selects a set of words with bias toward mid-length words and retrieves their clues.
+
+    Args:
+        valid_words (dict): Word-to-clue mapping.
+        num (int): Number of words to select.
+        seed (int): Random seed.
+
+    Returns:
+        Tuple[List[str], List[str]]: Selected words and corresponding clues.
+    """
     random.seed(seed)
     words = list(valid_words.keys())
     weights = [3 if 5 <= len(w) <= 8 else 1 for w in words]
@@ -69,13 +92,18 @@ def select_words(valid_words: Dict[str, str], num: int, seed: int):
 
 def place_words(words: List[str], grid_size: int = 20):
     """
-    将单词放置到网格中，并返回最终的字母网格和单词位置信息。
-    每个单词的信息包括：number、row、col、direction 和 word。
+    Places a list of words into a grid while ensuring valid crossword constraints.
+
+    Args:
+        words (List[str]): Words to be placed.
+        grid_size (int): Dimension of the square grid.
+
+    Returns:
+        Tuple[List[List[str]], List[Dict]]: Final grid and metadata for each placed word.
     """
     grid = [[None] * grid_size for _ in range(grid_size)]
     placed_info = []
     
-    # 按单词长度降序排序
     sorted_words = sorted(enumerate(words), key=lambda x: -len(x[1]))
     
     for original_idx, word in sorted_words:
@@ -87,7 +115,6 @@ def place_words(words: List[str], grid_size: int = 20):
             direction = random.choice(['across', 'down'])
             word_len = len(word)
             
-            # 根据方向计算最大起始坐标
             if direction == 'across':
                 max_col = grid_size - word_len
                 max_row = grid_size - 1
@@ -117,7 +144,6 @@ def place_words(words: List[str], grid_size: int = 20):
                 else:
                     temp_grid[r][c] = word[i]
             
-            # 检查交叉情况（首个单词允许没有交叉）
             if valid and (overlaps > 0 or original_idx == 0):
                 for i in range(word_len):
                     r = start_row + (i if direction == 'down' else 0)
@@ -141,15 +167,18 @@ def place_words(words: List[str], grid_size: int = 20):
 
 def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty: float):
     """
-    生成填字游戏图片（带难度控制的字母遮盖）
-    
-    参数：
-        difficulty: 0-1之间的难度值，0最易，1最难
+    Renders the crossword puzzle image with letters partially masked.
+
+    Args:
+        char_grid (List[List[str]]): Final letter grid.
+        placed_info (List[Dict]): Metadata about placed words.
+        difficulty (float): Value in [0, 1] representing clue masking rate.
+
+    Returns:
+        str: Path to the rendered image.
     """
     cell_size = 35
 
-    # 正确计算实际填字区域的边界：
-    # 对于 down 单词，最后一行 = row + len(word) - 1；对于 across 单词，最后一列 = col + len(word) - 1
     min_row = min(info['row'] for info in placed_info)
     max_row = max((info['row'] + len(info['word']) - 1) if info['direction'] == 'down' else info['row'] for info in placed_info)
     min_col = min(info['col'] for info in placed_info)
@@ -163,7 +192,6 @@ def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty
     draw = ImageDraw.Draw(img)
     masked_positions = set()
 
-    # 计算需要遮盖的位置
     for info in placed_info:
         word = info['word']
         word_len = len(word)
@@ -181,7 +209,6 @@ def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty
                 c = start_col
             masked_positions.add((r, c))
 
-    # 绘制网格和内容
     for r in range(min_row, max_row + 1):
         for c in range(min_col, max_col + 1):
             x0 = padding + (c - min_col) * cell_size
@@ -189,22 +216,16 @@ def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty
             x1 = x0 + cell_size
             y1 = y0 + cell_size
 
-            # 检查是否在网格范围内
             if r >= len(char_grid) or c >= len(char_grid[0]):
                 continue
-
             is_active = char_grid[r][c] is not None
             
             if is_active:
-                # 绘制白底格子
                 draw.rectangle([x0, y0, x1, y1], fill='white', outline='#CCCCCC')
-                
-                # 绘制单词起始编号
                 for info in placed_info:
                     if info['row'] == r and info['col'] == c:
                         draw.text((x0 + 2, y0 + 2), str(info['number']), fill='#FF4444', font=ImageFont.truetype("arial.ttf", 12) if os.path.exists("arial.ttf") else ImageFont.load_default())
-                
-                # 显示字母或下划线（根据遮盖情况）
+
                 if (r, c) not in masked_positions:
                     char = char_grid[r][c]
                     bbox = draw.textbbox((0, 0), char, font=ImageFont.truetype("arial.ttf", 14) if os.path.exists("arial.ttf") else ImageFont.load_default())
@@ -217,7 +238,6 @@ def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty
                     underline_y = y0 + cell_size - 4
                     draw.line([x0 + 3, underline_y, x1 - 3, underline_y], fill='#666666', width=2)
             else:
-                # 绘制灰底格子
                 draw.rectangle([x0, y0, x1, y1], fill='#DDDDDD', outline='#CCCCCC')
     
     os.makedirs('cache', exist_ok=True)
@@ -227,13 +247,16 @@ def render_image(char_grid: List[List[str]], placed_info: List[Dict], difficulty
 
 def generate(seed: int, word_clues_path: str = "high_quality_word_clues.csv"):
     """
-    生成填字游戏：
-        返回一个包含游戏信息的字典。
-        
-    改进说明：
-    - 如果在 max_retries 次尝试后仍无法生成有效填字游戏，则动态增加网格尺寸以提供更多放置空间，
-      并重新随机选择单词数量 (num) 和难度 (difficulty) 再尝试。
-    - 同时设置了全局最大尝试次数，防止无限循环。
+    Generates a complete crossword puzzle including image, words, and clues.
+
+    It retries word placement with increasing grid size until success.
+
+    Args:
+        seed (int): Random seed for reproducibility.
+        word_clues_path (str): Path to the word-clue CSV file.
+
+    Returns:
+        dict: Game state including words, clues, image path, base64-encoded image, etc.
     """
     valid_words = load_word_bank(word_clues_path)
     if len(valid_words) < 5:
@@ -282,14 +305,18 @@ def generate(seed: int, word_clues_path: str = "high_quality_word_clues.csv"):
     
     raise RuntimeError("生成填字游戏尝试次数过多")
 
+
 def verify(item):
     """
-    验证用户答案：
-      - 正确答案在 item['answer'] 中，是一个列表，例如 ["oversells", "rsvp", ...]。
-      - 用户答案在 item['action'] 中，预期格式为仅包含答案的列表字符串，例如 "['URGES', 'RSVP', ...]"。
-    优化后，该函数会对每个答案进行逐项比较，并将每项比较结果存入 item['response']，
-    同时计算得分（score 字段），得分为正确答案数量除以总答案数量。
-    如果解析失败，则返回 score 为 0 和相应的错误提示。
+    Verifies the user's submitted answers against the correct crossword solution.
+
+    Compares each answer individually and returns partial credit.
+
+    Args:
+        item (dict): Game state containing 'answer' and user 'action'.
+
+    Returns:
+        dict: Updated game state with detailed response and final score.
     """
     correct = item['answer']
     
@@ -349,21 +376,19 @@ class GameState(BaseModel):
     response: list
     prompt: str
     epoch: int
-# 生成初始游戏状态
+
+
 @app.post("/print_board", response_model=BoardRequest)
 def api_print_board(request: GameState):
     state = request.dict()
     board_output = print_board(state)
     return {"board": board_output}
 
-
-# 生成初始游戏状态
 @app.post("/generate", response_model=GameState)
 def api_generate(request: GenerateRequest):
     game_state = generate(request.seed)
     return game_state
 
-# 根据动作更新游戏状态
 @app.post("/verify", response_model=GameState)
 def api_verify(request: GameState):
     # 从请求中获取游戏状态，并设置新的动作

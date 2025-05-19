@@ -1,28 +1,33 @@
+# game_lib/13-play_lines/game_lib.py
+
+#Standard libraries
 import random
 from collections import deque
 import copy
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import uuid  # 用于生成唯一标识符
 from typing import Optional
-import numpy as np
 import ast
 import argparse
 
+#Commonly used open-source libraries
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import numpy as np
+
 def parse_init():
     """
-    定义并解析eval代码的命令行参数，配置日志记录，并检查输入的数据文件目录和输出的目录是否存在。
+    Define and parse command-line arguments for server deployment settings.
+
+    Returns:
+        argparse.Namespace: Parsed arguments including host and port.
     """
     parser = argparse.ArgumentParser(description="Data creation utility")
-
-    # 添加命令行参数
     parser.add_argument('-p', '--port', type=int, default=8775, help='服务部署端口')
-    # 添加命令行参数
     parser.add_argument('-H', '--host', type=str, default="0.0.0.0", help='服务部署地址')
-    # 解析命令行参数
     args = parser.parse_args()
     return args
+
 app = FastAPI()
 game_prompt = """
 You are a good game player, I'll give you a game board and rules.
@@ -50,6 +55,18 @@ Please output the answer in the form of a list within one line and do not break 
 """
 
 def convert_numpy_types(item):
+    """
+    Recursively convert NumPy data types to native Python types.
+
+    This function is useful for ensuring JSON-serializable output by converting
+    numpy.int64, numpy.float64, numpy.ndarray, etc., to their Python equivalents.
+
+    Args:
+        item (Any): A nested structure of lists, tuples, dicts, or NumPy types.
+
+    Returns:
+        Any: The same structure with all NumPy-specific types converted to native Python types.
+    """
     if isinstance(item, dict):
         return {k: convert_numpy_types(v) for k, v in item.items()}
     elif isinstance(item, list):
@@ -64,18 +81,37 @@ def convert_numpy_types(item):
         return item.tolist()
     else:
         return item
+    
 def print_board(item):
+    """
+    Generate a formatted Sokoban Path Connect game prompt from the puzzle grid.
+
+    Args:
+        item (dict): A game state dictionary containing the 'puzzle_grid' key.
+
+    Returns:
+        str: A game prompt with rules and a visual board formatted for model input.
+    """
     grid = item['puzzle_grid']
     output = ""
     for row in grid:
         output=output+''.join(str(cell) for cell in row)+'\n'
     return game_prompt.format(board = output)
+
 def generate_endpoints(grid_size, num_colors, num_x):
     """
-    随机生成谜题端点：
-    在一个 grid_size x grid_size 的空网格中，每个颜色随机选取两个不重复的位置，
-    并在谜题网格中标记出来（仅端点）。
-    返回：谜题网格（仅端点）和端点字典 endpoints[color] = (pos1, pos2)
+    Randomly generate puzzle endpoints and wall placements on an empty grid.
+
+    For each color, two non-adjacent endpoints are placed. Additional impassable
+    'X' cells are added at random empty locations.
+
+    Args:
+        grid_size (int): The size of the square grid.
+        num_colors (int): Number of unique color pairs to place.
+        num_x (int): Number of wall cells ('X') to add.
+
+    Returns:
+        tuple[list[list[str]], dict[int, tuple]]: The puzzle grid and a dictionary of endpoints.
     """
     grid = [['E' for _ in range(grid_size)] for _ in range(grid_size)]
     endpoints = {}
@@ -110,6 +146,20 @@ def generate_endpoints(grid_size, num_colors, num_x):
     return grid, endpoints
 
 def bfs_path_solution(sol_grid, start, end, color, grid_size, allow_empty=True):
+    """
+    Perform BFS to find a valid path between two endpoints of a given color.
+
+    Args:
+        sol_grid (list[list[Any]]): The current grid (may contain partial paths).
+        start (tuple): Starting coordinate.
+        end (tuple): Ending coordinate.
+        color (int): The color number to connect.
+        grid_size (int): The size of the grid.
+        allow_empty (bool): Whether traversal through empty cells is allowed.
+
+    Returns:
+        list[tuple] or None: A list of coordinates forming the path, or None if no path exists.
+    """
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
     
     start = tuple(start) if isinstance(start, list) else start
@@ -138,11 +188,18 @@ def bfs_path_solution(sol_grid, start, end, color, grid_size, allow_empty=True):
 
 def compute_solution_paths(puzzle_grid, endpoints, grid_size):
     """
-    根据谜题网格（仅端点）和端点字典，生成完整的解答路径。
-    利用一个副本 sol_grid（初始为谜题网格），依次对各颜色求路径，
-    路径求解时不允许覆盖其它颜色。
-    为减少冲突，按端点间曼哈顿距离从大到小排序后求解。
-    返回解答网格和 solution_paths 字典（solution_paths[color] = 路径列表）。
+    Compute paths for each color pair in the puzzle using BFS.
+
+    Prioritizes longer Manhattan distances first to reduce conflict.
+    Updates the solution grid in-place.
+
+    Args:
+        puzzle_grid (list[list[str]]): The original puzzle grid with only endpoints.
+        endpoints (dict[int, tuple[tuple, tuple]]): Dictionary of color to endpoint pairs.
+        grid_size (int): Size of the square puzzle grid.
+
+    Returns:
+        tuple[list[list[Any]], dict[int, list[tuple]]]: The updated solution grid and paths per color.
     """
     # 复制谜题网格作为初始解答网格
     sol_grid = copy.deepcopy(puzzle_grid)
@@ -167,12 +224,17 @@ def compute_solution_paths(puzzle_grid, endpoints, grid_size):
 
 def extend_paths(sol_grid, endpoints):
     """
-    从当前各颜色路径的端点出发，尝试进行强制延伸：
-    - 首先扫描整个棋盘，针对每种颜色，重新计算当前端点（即与同色相邻数为1的格子）。
-    - 对每个端点，检查其四邻域中空白格（'E'），如果某个端点只有唯一一个空白邻域满足：
-      当该候选格填入当前颜色后，其同色邻居数恰为 1（即刚好仅与当前端点相连），则将该空白格填入当前颜色，
-      同时更新该颜色的端点状态（原端点变为内部点，新填入的格子成为新的端点）。
-    - 重复以上过程，直到没有任何强制延伸动作可执行。
+    Extend color paths from current endpoints into empty cells where extension is deterministic.
+
+    For each color, identifies endpoints (cells with exactly one adjacent cell of the same color),
+    and attempts to extend the path into empty neighboring cells that would maintain a single-line structure.
+
+    Args:
+        sol_grid (list[list[Any]]): The partially filled solution grid.
+        endpoints (dict[int, tuple[tuple, tuple]]): The original endpoint pairs for each color.
+
+    Returns:
+        list[list[Any]]: The updated solution grid after forced extensions.
     """
     grid_size = len(sol_grid)
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
@@ -220,12 +282,19 @@ def extend_paths(sol_grid, endpoints):
 
 def generate(seed):
     """
-    修改后的 generate 函数：
-      1. 随机生成 grid_size、num_colors 及障碍数（'X'），这里建议适当降低障碍数以提高成功率。
-      2. 利用 generate_endpoints 生成仅含端点的谜题网格。
-      3. 调用 compute_solution_paths 对各颜色利用 BFS 求得初步连通路径（这一步保证每条路径本身是一条单线）。
-      4. 调用 extend_paths 对初步路径进行强制延伸，填充剩余空格，使棋盘尽可能被路径覆盖。
-      5. 若延伸后棋盘仍存在空格，或整体不满足 check_no_branching（即每种颜色仍需满足端点同色邻居为 1，中间格子为 2），则本次生成失败，重试新的参数。
+    Generate a valid Sokoban Path Connect puzzle with a complete solution.
+
+    This function iteratively tries to:
+    1. Randomly place color endpoints and walls.
+    2. Connect color pairs using BFS.
+    3. Extend paths to fill the grid.
+    4. Validate that the result is fully filled and non-branching.
+
+    Args:
+        seed (int): The random seed for reproducibility.
+
+    Returns:
+        dict: The complete puzzle state with metadata including 'puzzle_grid', 'endpoints', and 'grid_size'.
     """
     random.seed(seed)
     count=0
@@ -279,11 +348,18 @@ def generate(seed):
 # 新增辅助函数：检查每个颜色的连接是否为单一不分叉的路径
 def check_no_branching(sol_grid, endpoints):
     """
-    对于每种颜色，遍历其所有出现的格子，
-    检查：
-      - 对于起点和终点，必须只有1个相邻同色格子；
-      - 对于其它格子，必须正好有2个相邻同色格子。
-    如果存在不满足条件的情况，返回 False，否则返回 True。
+    Check that all color paths in the solution form non-branching single lines.
+
+    Each color path must satisfy:
+    - Exactly two endpoints, each with one adjacent same-color cell.
+    - All internal cells must have exactly two adjacent same-color neighbors.
+
+    Args:
+        sol_grid (list[list[Any]]): The final solution grid to validate.
+        endpoints (dict[int, tuple[tuple, tuple]]): Mapping of colors to their original endpoint pairs.
+
+    Returns:
+        bool: True if all paths are valid and non-branching, False otherwise.
     """
     grid_size = len(sol_grid)
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
@@ -320,6 +396,20 @@ def check_no_branching(sol_grid, endpoints):
 
 # 修改后的 verify 函数，增加了对不分叉要求的验证
 def verify(item):
+    """
+    Verify whether a proposed solution satisfies all Sokoban Path Connect game rules.
+
+    The solution must:
+    - Connect each color's endpoints with a valid path.
+    - Fill the entire board without any 'E' cells remaining.
+    - Maintain non-branching path structures for each color.
+
+    Args:
+        item (dict): Game state dictionary containing the submitted 'action' as a solution grid.
+
+    Returns:
+        dict: The updated game state including the 'score' and 'is_end' fields.
+    """
     # 确保 action 是列表
     if isinstance(item['action'], str):
         try:
